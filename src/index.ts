@@ -144,7 +144,8 @@ export default {
 
 				default: {
 					// 默认返回 Cloudflare 连接信息（用于调试）
-					return new Response(JSON.stringify(request.cf, null, 4), {
+					const cfInfo = request.cf || {};
+					return new Response(JSON.stringify(cfInfo, null, 4), {
 						status: 200,
 						headers: {
 							'Content-Type': 'application/json;charset=utf-8',
