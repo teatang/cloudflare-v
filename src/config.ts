@@ -109,5 +109,5 @@ export function createConfig(env: EnvConfig): ServerConfig {
 }
 
 // 导出常量供其他模块使用
-export const VERSION = 'V25.5.27'; // 脚本版本号
-export const PATH = '/?ed=2560'; // WebSocket 路径
+export const VERSION = 'V26.1.16'; // 脚本版本号
+export const PATH = '/?ed=0624'; // WebSocket 路径
