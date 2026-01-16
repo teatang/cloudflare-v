@@ -10,25 +10,33 @@ import {
 
 interface Env extends EnvConfig {}
 
+// ==================== 主入口 ====================
+
+/**
+ * Cloudflare Workers 入口函数
+ * 处理所有 HTTP/WebSocket 请求
+ */
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		try {
+			// 初始化配置
 			const config = createConfig(env);
 			const upgradeHeader = request.headers.get('Upgrade');
 			const url = new URL(request.url);
 
-			// Handle WebSocket upgrade for VLESS protocol
+			// WebSocket 升级请求 - 处理 VLESS 代理连接
 			if (upgradeHeader === 'websocket') {
 				return await handleVlessWebSocket(request, config.userId);
 			}
 
-			// Handle HTTP requests for configuration pages and subscriptions
+			// HTTP 请求 - 处理配置页面和订阅
 			const pathname = url.pathname;
 			const userId = config.userId;
 
-			// Route handling
+			// 路由分发
 			switch (pathname) {
 				case `/${userId}`: {
+					// 首页 - 返回 HTML 配置页面
 					const html = generateConfigPage(
 						config.userId,
 						config.cdnIp,
@@ -45,6 +53,7 @@ export default {
 				}
 
 				case `/${userId}/ty`: {
+					// 通用订阅 - Base64 编码的所有节点
 					const shareLink = generateShareLink(
 						config.allNodes,
 						config.userId,
@@ -59,6 +68,7 @@ export default {
 				}
 
 				case `/${userId}/cl`: {
+					// Clash Meta 订阅 - 所有节点
 					const clashConfig = generateClashConfig(
 						config.allNodes,
 						config.userId,
@@ -73,6 +83,7 @@ export default {
 				}
 
 				case `/${userId}/sb`: {
+					// Sing-Box 订阅 - 所有节点
 					const singBoxConfig = generateSingBoxConfig(
 						config.allNodes,
 						config.userId,
@@ -87,6 +98,7 @@ export default {
 				}
 
 				case `/${userId}/pty`: {
+					// 通用订阅 - 仅 TLS 节点
 					const shareLink = generateShareLink(
 						config.tlsOnlyNodes,
 						config.userId,
@@ -101,6 +113,7 @@ export default {
 				}
 
 				case `/${userId}/pcl`: {
+					// Clash Meta 订阅 - 仅 TLS 节点
 					const clashConfig = generateClashConfig(
 						config.tlsOnlyNodes,
 						config.userId,
@@ -115,6 +128,7 @@ export default {
 				}
 
 				case `/${userId}/psb`: {
+					// Sing-Box 订阅 - 仅 TLS 节点
 					const singBoxConfig = generateSingBoxConfig(
 						config.tlsOnlyNodes,
 						config.userId,
@@ -129,7 +143,7 @@ export default {
 				}
 
 				default: {
-					// Return CF info for debugging
+					// 默认返回 Cloudflare 连接信息（用于调试）
 					return new Response(JSON.stringify(request.cf, null, 4), {
 						status: 200,
 						headers: {

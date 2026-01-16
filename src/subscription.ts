@@ -1,28 +1,33 @@
 import type { ServerNode } from './types';
 import { PATH, VERSION } from './config';
 
+// ==================== 基础函数 ====================
+
 /**
- * Generate VLESS URI link
+ * 生成单个 VLESS URI 链接
+ * 格式: vless://uuid@ip:port?params#name
  */
 function generateVlessLink(node: ServerNode, userId: string, hostName: string): string {
 	const security = node.isTls ? 'tls' : 'none';
 	const sni = node.isTls ? `&sni=${hostName}` : '';
-	const servername = node.isTls ? `servername: ${hostName}` : '';
-	const tls = node.isTls ? `tls: true` : `tls: false`;
 
 	return `vless://${userId}@${node.ip}:${node.port}?encryption=none&security=${security}${sni}&fp=randomized&type=ws&host=${hostName}&path=${encodeURIComponent(PATH)}#${node.name}_${node.ip}_${node.port}`;
 }
 
 /**
- * Generate base64 encoded share link
+ * 生成 Base64 编码的分享链接
+ * 将多个 VLESS URI 用换行符连接后 Base64 编码
  */
 export function generateShareLink(nodes: ServerNode[], userId: string, hostName: string): string {
 	const links = nodes.map((node) => generateVlessLink(node, userId, hostName)).join('\n');
 	return btoa(links);
 }
 
+// ==================== Clash Meta 配置 ====================
+
 /**
- * Generate Clash Meta configuration
+ * 生成 Clash Meta 格式的配置文件
+ * 包含代理节点、代理组和规则
  */
 export function generateClashConfig(
 	nodes: ServerNode[],
@@ -111,8 +116,11 @@ rules:
   - MATCH,🌍选择代理`;
 }
 
+// ==================== Sing-Box 配置 ====================
+
 /**
- * Generate Sing-Box configuration
+ * 生成 Sing-Box 格式的配置文件
+ * 包含出站规则、DNS 配置和路由规则
  */
 export function generateSingBoxConfig(
 	nodes: ServerNode[],
@@ -354,8 +362,11 @@ export function generateSingBoxConfig(
 	}`;
 }
 
+// ==================== HTML 配置页面 ====================
+
 /**
- * Generate HTML page for node configuration display
+ * 生成节点配置 HTML 页面
+ * 展示节点信息、链接、订阅地址，支持一键复制
  */
 export function generateConfigPage(
 	userId: string,
@@ -364,15 +375,15 @@ export function generateConfigPage(
 	httpsNodes: ServerNode[],
 	hostName: string
 ): string {
-	// Generate single node links
+	// 生成单节点链接
 	const wsNode = `vless://${userId}@${cdnIp}:8880?encryption=none&security=none&type=ws&host=${hostName}&path=%2F%3Fed%3D2560#${hostName}`;
 	const wsTlsNode = `vless://${userId}@${cdnIp}:8443?encryption=none&security=tls&type=ws&host=${hostName}&sni=${hostName}&fp=random&path=%2F%3Fed%3D2560#${hostName}`;
 
-	// Generate share links
+	// 生成分享链接
 	const allShareLink = generateShareLink([...httpNodes, ...httpsNodes], userId, hostName);
 	const tlsShareLink = generateShareLink(httpsNodes, userId, hostName);
 
-	// Generate subscription URLs
+	// 生成订阅 URL
 	const tyUrl = `https://${hostName}/${userId}/ty`;
 	const clUrl = `https://${hostName}/${userId}/cl`;
 	const sbUrl = `https://${hostName}/${userId}/sb`;
@@ -380,10 +391,11 @@ export function generateConfigPage(
 	const pclUrl = `https://${hostName}/${userId}/pcl`;
 	const psbUrl = `https://${hostName}/${userId}/psb`;
 
+	// 提示信息
 	const note = `注意：ProxyIP使用nat64自动生成，无需设置`;
-
 	const noteshow = note.replace(/\n/g, '<br>');
 
+	// 判断是否为 workers.dev 域名
 	const isWorkersDev = hostName.includes('workers.dev');
 
 	const displayHtml = `

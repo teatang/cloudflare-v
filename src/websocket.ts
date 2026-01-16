@@ -2,10 +2,15 @@ import { connect } from 'cloudflare:sockets';
 import type { VlessHeader } from './types';
 import { parseVlessHeader, createVlessResponseHeader } from './vless';
 
-const WS_READY_STATE_OPEN = 1;
+const WS_READY_STATE_OPEN = 1; // WebSocket 已连接状态
+
+// ==================== NAT64 转换函数 ====================
 
 /**
- * Convert IPv4 to NAT64 IPv6 address
+ * 将 IPv4 地址转换为 NAT64 IPv6 地址
+ * Cloudflare Workers 使用 NAT64/DNS64 访问 IPv4 服务
+ * @param ipv4Address - IPv4 地址字符串
+ * @returns NAT64 IPv6 地址
  */
 function convertToNAT64IPv6(ipv4Address: string): string {
 	const parts = ipv4Address.split('.');
@@ -13,6 +18,7 @@ function convertToNAT64IPv6(ipv4Address: string): string {
 		throw new Error('Invalid IPv4 address');
 	}
 
+	// 将每个字节转换为十六进制
 	const hex = parts.map((part) => {
 		const num = parseInt(part, 10);
 		if (num < 0 || num > 255) {
@@ -21,16 +27,20 @@ function convertToNAT64IPv6(ipv4Address: string): string {
 		return num.toString(16).padStart(2, '0');
 	});
 
+	// 使用固定的 NAT64 前缀
 	const prefixes = ['2602:fc59:b0:64::'];
 	const chosenPrefix = prefixes[Math.floor(Math.random() * prefixes.length)];
 	return `[${chosenPrefix}${hex[0]}${hex[1]}:${hex[2]}${hex[3]}]`;
 }
 
 /**
- * Get IPv6 proxy address via DNS lookup
+ * 通过 DNS 查询获取域名的 IPv6 NAT64 地址
+ * @param domain - 要查询的域名
+ * @returns NAT64 IPv6 地址
  */
 async function getIPv6ProxyAddress(domain: string): Promise<string> {
 	try {
+		// 使用 Cloudflare DNS 查询 A 记录
 		const dnsQuery = await fetch(`https://1.1.1.1/dns-query?name=${domain}&type=A`, {
 			headers: {
 				Accept: 'application/dns-json',
@@ -51,8 +61,11 @@ async function getIPv6ProxyAddress(domain: string): Promise<string> {
 	}
 }
 
+// ==================== WebSocket 流处理 ====================
+
 /**
- * Create WebSocket readable stream
+ * 创建 WebSocket 可读流
+ * 将 WebSocket 消息转换为 ReadableStream
  */
 function createWebSocketReadableStream(
 	ws: WebSocket,
@@ -60,25 +73,29 @@ function createWebSocketReadableStream(
 ): ReadableStream {
 	return new ReadableStream({
 		start(controller) {
+			// 监听 WebSocket 消息事件
 			ws.addEventListener('message', (event) => {
 				controller.enqueue(event.data);
 			});
 
+			// 监听关闭事件
 			ws.addEventListener('close', () => {
 				controller.close();
 			});
 
+			// 监听错误事件
 			ws.addEventListener('error', (err) => {
 				controller.error(err);
 			});
 
+			// 处理 early data（0-RTT 恢复）
 			if (earlyDataHeader) {
 				try {
 					const decoded = atob(earlyDataHeader.replace(/-/g, '+').replace(/_/g, '/'));
 					const data = Uint8Array.from(decoded, (c) => c.charCodeAt(0));
 					controller.enqueue(data.buffer);
 				} catch (e) {
-					// Ignore early data decode errors
+					// 忽略 early data 解码错误
 				}
 			}
 		},
@@ -86,20 +103,23 @@ function createWebSocketReadableStream(
 }
 
 /**
- * Close socket safely
+ * 安全关闭 Socket
  */
 function closeSocket(socket: any): void {
 	if (socket) {
 		try {
 			socket.close();
 		} catch (e) {
-			// Ignore close errors
+			// 忽略关闭错误
 		}
 	}
 }
 
+// ==================== 数据转发 ====================
+
 /**
- * Pipe remote socket data to WebSocket
+ * 将远程服务器数据转发到 WebSocket 客户端
+ * 首次发送时附带 VLESS 响应头
  */
 function pipeRemoteToWebSocket(
 	remoteSocket: any,
@@ -116,6 +136,7 @@ function pipeRemoteToWebSocket(
 				write(chunk) {
 					hasIncomingData = true;
 					if (ws.readyState === WS_READY_STATE_OPEN) {
+						// 首次数据发送 VLESS 头
 						if (!headerSent) {
 							const combined = new Uint8Array(vlessHeader.byteLength + chunk.byteLength);
 							combined.set(new Uint8Array(vlessHeader), 0);
@@ -128,6 +149,7 @@ function pipeRemoteToWebSocket(
 					}
 				},
 				close() {
+					// 如果没有收到数据且有重试函数，则重试
 					if (!hasIncomingData && retry) {
 						retry();
 						return;
@@ -150,16 +172,21 @@ function pipeRemoteToWebSocket(
 		});
 }
 
+// ==================== UDP 处理 ====================
+
 /**
- * Handle UDP outbound traffic (DNS)
+ * 处理 UDP 出站流量（主要用于 DNS 查询）
+ * 将 UDP 包转发到 1.1.1.1 DNS 服务器
  */
 async function handleUDPOutbound(
 	webSocket: WebSocket,
 	vlessResponseHeader: Uint8Array
 ): Promise<{ write: (chunk: Uint8Array) => void }> {
 	let isVlessHeaderSent = false;
+
+	// 转换流：解析 UDP 包长度并提取数据
 	const transformStream = new TransformStream({
-		start(controller) {},
+		start() {},
 		transform(chunk, controller) {
 			for (let index = 0; index < chunk.byteLength; ) {
 				const lengthBuffer = chunk.slice(index, index + 2);
@@ -169,9 +196,10 @@ async function handleUDPOutbound(
 				controller.enqueue(udpData);
 			}
 		},
-		flush(controller) {},
+		flush() {},
 	});
 
+	// 将 DNS 查询结果发送回客户端
 	transformStream.readable
 		.pipeTo(
 			new WritableStream({
@@ -214,33 +242,42 @@ async function handleUDPOutbound(
 	};
 }
 
+// ==================== 主入口函数 ====================
+
 /**
- * Handle VLESS WebSocket connection
+ * 处理 VLESS WebSocket 连接
+ * 这是代理的核心函数，处理客户端连接并转发流量
  */
 export async function handleVlessWebSocket(
 	request: Request,
 	userId: string
 ): Promise<Response> {
+	// 创建 WebSocket 对
 	const wsPair = new WebSocketPair();
 	const [clientWS, serverWS] = Object.values(wsPair);
 
+	// 接受 WebSocket 连接
 	serverWS.accept();
 
+	// 获取 early data 头（用于 0-RTT）
 	const earlyDataHeader = request.headers.get('sec-websocket-protocol') || '';
 	const wsReadable = createWebSocketReadableStream(serverWS, earlyDataHeader);
-	let remoteSocket: any = null;
 
-	let udpStreamWrite: ((chunk: Uint8Array) => void) | null = null;
-	let isDns = false;
+	let remoteSocket: any = null; // 远程服务器连接
+	let udpStreamWrite: ((chunk: Uint8Array) => void) | null = null; // UDP 写入流
+	let isDns = false; // 是否是 DNS 流量
 
+	// 将 WebSocket 数据管道化处理
 	wsReadable
 		.pipeTo(
 			new WritableStream({
 				async write(chunk) {
+					// DNS 流量走 UDP 处理
 					if (isDns && udpStreamWrite) {
 						return udpStreamWrite(chunk);
 					}
 
+					// 已建立连接，直接转发数据
 					if (remoteSocket) {
 						const writer = remoteSocket.writable.getWriter();
 						await writer.write(chunk);
@@ -248,6 +285,7 @@ export async function handleVlessWebSocket(
 						return;
 					}
 
+					// 解析 VLESS 头部
 					const result = parseVlessHeader(chunk, userId);
 					if (result.hasError) {
 						throw new Error(result.message);
@@ -256,6 +294,7 @@ export async function handleVlessWebSocket(
 					const vlessRespHeader = createVlessResponseHeader(result.vlessVersion!);
 					const rawClientData = chunk.slice(result.rawDataIndex!);
 
+					// UDP 处理（仅支持 DNS）
 					if (result.isUDP) {
 						if (result.portRemote === 53) {
 							isDns = true;
@@ -268,7 +307,8 @@ export async function handleVlessWebSocket(
 						}
 					}
 
-					async function connectAndWrite(address: string, port: number) {
+					// TCP 连接函数
+					async function connectAndWrite(address: string, port: number): Promise<any> {
 						const tcpSocket = await connect({
 							hostname: address,
 							port: port,
@@ -280,19 +320,24 @@ export async function handleVlessWebSocket(
 						return tcpSocket;
 					}
 
+					// NAT64 回退重试函数
 					async function retry() {
 						try {
+							// 获取 NAT64 IPv6 地址
 							const proxyIP = await getIPv6ProxyAddress(result.addressRemote!);
 							console.log(`Attempting connection via NAT64 IPv6 address ${proxyIP}...`);
+
 							const tcpSocket = await connect({
 								hostname: proxyIP,
 								port: result.portRemote!,
 							});
 							remoteSocket = tcpSocket;
+
 							const writer = tcpSocket.writable.getWriter();
 							await writer.write(rawClientData);
 							writer.releaseLock();
 
+							// 监听连接关闭
 							tcpSocket.closed
 								.catch((error: Error) => {
 									console.error('NAT64 IPv6 connection close error:', error);
@@ -310,6 +355,7 @@ export async function handleVlessWebSocket(
 						}
 					}
 
+					// 尝试直接连接，失败则回退到 NAT64
 					try {
 						const tcpSocket = await connectAndWrite(result.addressRemote!, result.portRemote!);
 						pipeRemoteToWebSocket(tcpSocket, serverWS, vlessRespHeader, retry);
@@ -331,6 +377,7 @@ export async function handleVlessWebSocket(
 			serverWS.close(1011, 'Internal error');
 		});
 
+	// 返回 WebSocket 响应
 	return new Response(null, {
 		status: 101,
 		webSocket: clientWS,
