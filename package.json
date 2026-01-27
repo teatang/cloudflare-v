@@ -7,13 +7,18 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"build": "esbuild src/index.ts --bundle --outfile=dist/worker.js --minify --format=esm --platform=neutral --target=es2022 --external:cloudflare:*",
+		"build:min": "pnpm build && terser dist/worker.js --compress --mangle --output dist/worker.min.js",
+		"build:one": "pnpm build && terser dist/worker.js --compress --mangle --output dist/worker.one-line.js --comments false"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
 		"typescript": "^5.5.2",
 		"vitest": "~3.2.0",
-		"wrangler": "^4.59.2"
+		"wrangler": "^4.59.2",
+		"esbuild": "^0.25.0",
+		"terser": "^5.39.0"
 	},
 	"packageManager": "pnpm@9.14.2+sha512.6e2baf77d06b9362294152c851c4f278ede37ab1eba3a55fda317a4a17b209f4dbb973fb250a77abc463a341fcb1f17f17cfa24091c4eb319cda0d9b84278387"
 }
